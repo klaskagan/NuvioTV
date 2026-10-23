@@ -991,6 +991,23 @@ open class MainActivity : ComponentActivity() {
                         val url = pendingDeepLink ?: return@LaunchedEffect
                         if (!layoutChosen) return@LaunchedEffect
                         when (val deepLink = DeepLinkParser.parse(url)) {
+                            is AppDeepLink.Handoff -> {
+                                // Keep the effect key intact while the receiver suspends for
+                                // account lookup, network requests and TV approval.
+                                val handoff = com.nuvio.tv.core.handoff.TvHandoffReceiver.accept(
+                                    this@MainActivity, deepLink.launch,
+                                    authManager.getEffectiveUserId(fallbackToOwnIdOnFailure = false), activeProfileId,
+                                    currentlyPlaying = currentRoute?.startsWith("player/") == true,
+                                )
+                                if (handoff != null) navController.navigate(Screen.Stream.createRoute(
+                                    videoId = handoff.videoId, contentType = handoff.contentType,
+                                    title = handoff.title, contentId = handoff.contentId,
+                                    contentName = handoff.title, profileId = activeProfileId,
+                                    season = handoff.request.optInt("season").takeIf { handoff.contentType == "series" },
+                                    episode = handoff.request.optInt("episode").takeIf { handoff.contentType == "series" },
+                                )) { launchSingleTop = true }
+                                if (pendingDeepLinkUrl.value == url) pendingDeepLinkUrl.value = null
+                            }
                             is AppDeepLink.Meta -> {
                                 pendingDeepLinkUrl.value = null
                                 navController.navigate(
