@@ -18,6 +18,10 @@ object DeepLinkParser {
                 null
             }
         }
+        if (scheme == "nuvio-handoff") {
+            return if (parsedUrl.host == "handoff") firstParameter(queryParameters(parsedUrl), "launch")
+                ?.takeIf { it.length <= 4096 }?.let(AppDeepLink::Handoff) else null
+        }
         if (scheme != "nuvio") return null
 
         val host = parsedUrl.host?.lowercase().orEmpty()
@@ -27,6 +31,8 @@ object DeepLinkParser {
             .mapNotNull { segment -> decode(segment).trim().takeIf(String::isNotBlank) }
 
         return when (host) {
+            "handoff" -> firstParameter(queryParameters(parsedUrl), "launch")
+                ?.takeIf { it.length <= 4096 }?.let(AppDeepLink::Handoff)
             "meta" -> parseMetaFromParameters(parsedUrl) ?: parseMetaFromPath(pathSegments)
             "detail", "details", "open", "watch" -> parseMetaFromPath(pathSegments)
             "movie", "movies", "series", "show", "shows", "tv" -> {

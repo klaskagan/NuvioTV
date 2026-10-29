@@ -82,7 +82,7 @@ object StreamAutoPlaySelector {
             StreamAutoPlaySource.INSTALLED_ADDONS_ONLY -> streams.filter { it.serverTarget != null || it.addonName in installedAddonNames }
             StreamAutoPlaySource.ENABLED_PLUGINS_ONLY -> streams.filter { it.addonName !in installedAddonNames }
         }
-        val candidateStreams = sourceScopedStreams.filter { stream ->
+        val candidateStreams = com.nuvio.tv.core.handoff.TvHandoffReceiver.preferEdition(sourceScopedStreams.filter { stream ->
             val isAddonStream = stream.addonName in installedAddonNames
             if (stream.serverTarget != null) {
                 true
@@ -91,7 +91,7 @@ object StreamAutoPlaySelector {
             } else {
                 selectedPlugins.isEmpty() || stream.addonName in selectedPlugins
             }
-        }
+        })
         if (candidateStreams.isEmpty()) return null
 
         // Binge group matching takes priority over mode and source filters — even in MANUAL mode,

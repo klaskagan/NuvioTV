@@ -354,6 +354,13 @@ class PlayerRuntimeController(
         isLive: Boolean = _playbackTimeline.value.isLive,
         watchedDurationMs: Long = _playbackTimeline.value.watchedDurationMs
     ) {
+        com.nuvio.tv.core.handoff.TvHandoffReceiver.playback(contentId, currentVideoId, profileId, currentPosition, _uiState.value.isPlaying && hasRenderedFirstFrame && !_uiState.value.isBuffering, _exoPlayer ?: this)
+        if (com.nuvio.tv.core.handoff.TvHandoffReceiver.shouldStopCancelledPlayback(contentId, currentVideoId, profileId, _exoPlayer ?: this)) {
+            userPausedManually = true
+            shouldEnforceAutoplayOnFirstReady = false
+            setPlaybackPaused(true)
+            stopWatchProgressSaving()
+        }
         if (_uiState.value.isLive != isLive) {
             _uiState.update { it.copy(isLive = isLive) }
         }
