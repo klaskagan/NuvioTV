@@ -520,7 +520,9 @@ internal fun PlayerRuntimeController.loadSavedProgressFor(season: Int?, episode:
         } else {
             watchProgressRepository.getProgress(progressContentId!!, profileId).firstOrNull()
         }
-        val progress = newerServerProgress(local)
+        val progress = com.nuvio.tv.core.handoff.TvHandoffReceiver.overlayProgress(
+        newerServerProgress(local), contentId, currentVideoId, profileId
+    )
 
         progress?.let { saved ->
 
@@ -570,7 +572,9 @@ internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: In
     } else {
         watchProgressRepository.getProgress(progressContentId!!, profileId).firstOrNull()
     }
-    val progress = newerServerProgress(local)
+    val progress = com.nuvio.tv.core.handoff.TvHandoffReceiver.overlayProgress(
+        newerServerProgress(local), contentId, currentVideoId, profileId
+    )
 
     progress?.let { saved ->
         if (saved.isInProgress()) {
@@ -703,6 +707,7 @@ internal fun PlayerRuntimeController.tryApplyPendingResumeProgress(player: Playe
 }
 
 internal fun PlayerRuntimeController.resolvePendingInitialResumePosition(): Long {
+    com.nuvio.tv.core.handoff.TvHandoffReceiver.resumePosition(contentId, currentVideoId, profileId)?.let { return it }
     val saved = pendingResumeProgress ?: return 0L
     val target = when {
         saved.duration > 0L -> saved.resolveResumePosition(saved.duration)

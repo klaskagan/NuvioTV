@@ -161,6 +161,7 @@ internal fun PlayerRuntimeController.initializePlayer(
         _uiState.update { it.copy(error = context.getString(R.string.player_error_no_stream_url), showLoadingOverlay = false) }
         return
     }
+    com.nuvio.tv.core.handoff.TvHandoffReceiver.beginPlayback(contentId, currentVideoId, profileId, this)
     mpvMediaLoadPrepared = false
     val afrPreflightToken = afrPreflightGate.token()
 
@@ -1071,6 +1072,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
 
             _exoPlayer?.apply {
+                com.nuvio.tv.core.handoff.TvHandoffReceiver.beginPlayback(contentId, currentVideoId, profileId, this)
                 val audioAttributes = AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
