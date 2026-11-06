@@ -248,7 +248,8 @@ data class PlayerUiState(
     // When true, suppress all torrent stats text (buffer, seeds, peers, speed)
     // from loading overlay, rebuffering indicator, and corner overlay.
     val hideTorrentStats: Boolean = true,
-    val isLive: Boolean = false
+    val isLive: Boolean = false,
+    val canSeekLive: Boolean = false
 ) {
     /** Subtitle style to render with, after applying the HDR override for the current video. */
     val effectiveSubtitleStyle: SubtitleStyleSettings
@@ -280,7 +281,8 @@ data class PlaybackTimelineState(
     /** True for live windows (Live TV / live HLS), not VOD HLS. */
     val isLive: Boolean = false,
     /** Wall-clock time spent playing the current live stream. */
-    val watchedDurationMs: Long = 0L
+    val watchedDurationMs: Long = 0L,
+    val go3Dvr: LongRange? = null
 )
 
 data class TrackInfo(

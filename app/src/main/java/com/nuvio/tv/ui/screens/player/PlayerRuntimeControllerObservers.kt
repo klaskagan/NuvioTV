@@ -442,7 +442,8 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
                 preferredAudioLanguage = settings.preferredAudioLanguage,
                 secondaryPreferredAudioLanguage = settings.secondaryPreferredAudioLanguage,
                 deviceLanguages = resolveDeviceAudioLanguages(),
-                contentOriginalLanguage = contentLanguage
+                contentOriginalLanguage = contentLanguage,
+                go3Playback = isGo3Playback
             )
             if (resolvedAudioLanguages != mpvPreferredAudioLanguages) {
                 mpvPreferredAudioLanguages = resolvedAudioLanguages

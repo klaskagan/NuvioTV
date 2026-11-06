@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
@@ -64,6 +65,11 @@ fun DiscoverScreen(
     LaunchedEffect(uiState.discoverLocation) {
         if (uiState.discoverLocation != DiscoverLocation.OFF) {
             viewModel.ensureDiscoverLoaded()
+        }
+    }
+    LaunchedEffect(lifecycleOwner,uiState.selectedDiscoverCatalogKey) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while(true) { viewModel.revalidateGo3IfNeeded(); kotlinx.coroutines.delay(120_000) }
         }
     }
 
@@ -126,6 +132,7 @@ fun DiscoverScreen(
                     viewModel.onEvent(SearchEvent.SelectDiscoverGenre(it))
                 },
                 onLoadMore = { viewModel.onEvent(SearchEvent.LoadNextDiscoverResults) },
+                onRefreshDiscover = { viewModel.onEvent(SearchEvent.RefreshDiscover) },
                 onItemLongPress = { item, addonBaseUrl ->
                     viewModel.posterOptions.show(item, addonBaseUrl)
                 },

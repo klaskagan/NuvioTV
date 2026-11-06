@@ -16,6 +16,7 @@ fun formatAddonTypeLabel(value: String): String {
 fun localizedContentType(context: Context, contentType: String?): String = when (contentType?.lowercase()?.trim()) {
     "movie" -> context.getString(R.string.type_movie)
     "series" -> context.getString(R.string.type_series)
+    "sport", "sports" -> context.getString(R.string.type_sports)
     "tv" -> "TV"
     else -> contentType?.let { formatAddonTypeLabel(it) } ?: ""
 }

@@ -41,7 +41,7 @@ internal fun ContentDiscoverySettingsContent(
     var returningToHub by remember { mutableStateOf(false) }
 
     BackHandler(enabled = serverPage != null) {
-        serverPage = if (serverPage == SERVERS_PAGE) null else SERVERS_PAGE
+        serverPage = if (serverPage == SERVERS_PAGE || serverPage == "go3" || serverPage == "football") null else SERVERS_PAGE
         if (serverPage == null) returningToHub = true
     }
 
@@ -66,11 +66,15 @@ internal fun ContentDiscoverySettingsContent(
                 onNavigateToPlugins()
             },
             onNavigateToServers = { serverPage = SERVERS_PAGE },
+            onNavigateToGo3 = { serverPage = "go3" },
+            onNavigateToFootball = { serverPage = "football" },
             showPlugins = showPlugins,
             initialFocusRequester = initialFocusRequester,
             focusPluginsOnReturn = focusPluginsOnReturn && showPlugins,
             serversFocusRequester = hubServersRequester
         )
+        "football" -> com.nuvio.tv.football.FootballSettingsContent(onBack={ serverPage=null;returningToHub=true })
+        "go3" -> com.nuvio.tv.go3.Go3SettingsContent(onBack={ serverPage=null;returningToHub=true })
         SERVERS_PAGE -> MediaServersSettingsContent(
             initialFocusRequester = serversRequester,
             onOpenServer = { serverPage = it }
@@ -89,6 +93,8 @@ private fun ContentDiscoveryHub(
     onNavigateToAddons: () -> Unit,
     onNavigateToPlugins: () -> Unit,
     onNavigateToServers: () -> Unit,
+    onNavigateToGo3: () -> Unit,
+    onNavigateToFootball: () -> Unit,
     showPlugins: Boolean,
     initialFocusRequester: FocusRequester?,
     focusPluginsOnReturn: Boolean,
@@ -121,6 +127,8 @@ private fun ContentDiscoveryHub(
                 leadingIcon = Icons.Default.Dns,
                 modifier = Modifier.focusRequester(serversFocusRequester)
             )
+            SettingsActionRow(title="Go3",subtitle="Link account, choose viewing profile or reset the local Go3 session",onClick=onNavigateToGo3)
+            SettingsActionRow(title="Football Lineups",subtitle="Configure a masked, local PitchAPI key",onClick=onNavigateToFootball)
             if (showPlugins) {
                 SettingsActionRow(
                     title = stringResource(R.string.plugin_title),

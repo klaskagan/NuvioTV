@@ -12,6 +12,7 @@ internal fun PlayerRuntimeController.maybeAutoSwitchInternalPlayerOnStartupError
     detailedError: String,
     allowEngineFailover: Boolean
 ): Boolean {
+    if(isGo3Playback) return false
     if (!allowEngineFailover) return false
     if (!autoSwitchInternalPlayerOnErrorEnabled) return false
     if (startupEngineFailoverTriggered) return false

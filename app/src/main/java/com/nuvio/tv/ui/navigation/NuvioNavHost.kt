@@ -31,6 +31,7 @@ import com.nuvio.tv.data.mediaserver.ServerCatalog
 import com.nuvio.tv.ui.screens.CatalogSeeAllScreen
 import com.nuvio.tv.ui.screens.ExperienceModeSelectionScreen
 import com.nuvio.tv.ui.screens.LayoutSelectionScreen
+import com.nuvio.tv.go3.playbackLocator
 import com.nuvio.tv.ui.screens.detail.MetaDetailsScreen
 import com.nuvio.tv.ui.screens.home.HomeScreen
 import com.nuvio.tv.ui.screens.addon.AddonManagerScreen
@@ -335,6 +336,16 @@ private fun PlaybackNavHost(
             val detailArgs = backStackEntry.arguments
             if (ServerCatalog.isCollection(detailArgs?.getString("itemId"), detailArgs?.getString("itemType"))) {
                 ServerCatalogDestination(navController, backStackEntry)
+                return@composable
+            }
+            val go3Id=detailArgs?.getString("itemId").orEmpty()
+            if(go3Id.startsWith("go3:programme:")) {
+                com.nuvio.tv.go3.Go3DetailScreen(id=go3Id,onBack={ navController.popBackStack() },onWatch={ programme,choice ->
+                    navController.navigate(Screen.Player.createRoute(
+                        streamUrl=programme.playbackLocator(choice),title=programme.title,contentId=programme.id,videoId=programme.id,
+                        contentType="sport",contentName=programme.title,poster=programme.artwork,backdrop=programme.artwork,
+                        addonName="Go3",startFromBeginning=choice==com.nuvio.tv.go3.Go3PlaybackChoice.BEGINNING))
+                })
                 return@composable
             }
             val savedState = backStackEntry.savedStateHandle

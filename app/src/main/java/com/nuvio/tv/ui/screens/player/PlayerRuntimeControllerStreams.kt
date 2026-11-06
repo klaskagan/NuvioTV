@@ -135,6 +135,7 @@ private fun Stream.isReadyForDebridPreparation(): Boolean =
         (isDirectDebrid() || (needsLocalDebridResolve() && debridCacheStatus?.state == StreamDebridCacheState.CACHED))
 
 internal fun PlayerRuntimeController.showSourcesPanel() {
+    if (isGo3Playback) return
     _uiState.update {
         it.copy(
             showSourcesPanel = true,

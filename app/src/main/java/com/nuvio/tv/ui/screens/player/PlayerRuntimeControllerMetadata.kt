@@ -193,7 +193,8 @@ private suspend fun PlayerRuntimeController.enrichDescriptionFromTmdb(id: String
                         preferredAudioLanguage = playerSettings.preferredAudioLanguage,
                         secondaryPreferredAudioLanguage = playerSettings.secondaryPreferredAudioLanguage,
                         deviceLanguages = resolveDeviceAudioLanguages(),
-                        contentOriginalLanguage = tmdbLang
+                        contentOriginalLanguage = tmdbLang,
+                        go3Playback = isGo3Playback
                     )
                     if (resolved.isNotEmpty()) {
                         _exoPlayer?.let { player ->

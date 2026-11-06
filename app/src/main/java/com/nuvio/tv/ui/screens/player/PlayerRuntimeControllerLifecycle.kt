@@ -14,6 +14,8 @@ internal fun PlayerRuntimeController.releasePlayer(
     flushPlaybackState: Boolean,
     keepTorrentStream: Boolean = false
 ) {
+    mediaSourceFactory.go3Ticket = null
+    go3PendingStartOverEpochMs = null
     logScrobbleDiagnostic("release_player", "flushPlaybackState=$flushPlaybackState")
 
     // Preserve current subtitle selection across any rebuild. When the user explicitly
@@ -111,6 +113,7 @@ internal fun PlayerRuntimeController.releasePlayer(
         runCatching { player.release() }
     }
     _exoPlayer = null
+    if(isGo3Playback) go3Session.close(scope)
     activeAssVideoEffect = null
     _loadControl = null
     currentBitrateAwareLoadControl = null

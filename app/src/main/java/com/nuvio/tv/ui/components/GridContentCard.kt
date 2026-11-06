@@ -25,6 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -77,6 +79,8 @@ fun GridContentCard(
     downFocusRequester: FocusRequester? = null,
     depthSurface: CardDepthSurface = CardDepthSurface.POSTERS,
     showReleaseInfo: Boolean = false,
+    badgeText: String? = null,
+    placeholderLabel: String? = null,
     onLongPress: (() -> Unit)? = null,
     onFocused: () -> Unit = {}
 ) {
@@ -125,6 +129,7 @@ fun GridContentCard(
                 }
             },
             modifier = Modifier
+                .then(if(placeholderLabel!=null) Modifier.semantics { contentDescription=item.name } else Modifier)
                 .then(
                     if (globalLandscape) Modifier.fillMaxWidth().aspectRatio(PosterShape.LANDSCAPE.aspectRatio())
                     else Modifier.width(posterCardStyle.width).height(cardHeight)
@@ -232,7 +237,10 @@ fun GridContentCard(
                     builder.build()
                 }
                 if (effectiveImageUrl.isNullOrBlank()) {
-                    MonochromePosterPlaceholder(contentDescription = item.name)
+                    if(placeholderLabel==null) MonochromePosterPlaceholder(contentDescription = item.name)
+                    else Box(Modifier.fillMaxSize().background(bgCardColor),contentAlignment=Alignment.Center) {
+                        Text(placeholderLabel,style=MaterialTheme.typography.titleLarge,color=NuvioTheme.colors.TextPrimary)
+                    }
                 } else {
                     AsyncImage(
                         model = imageModel,
@@ -346,6 +354,12 @@ fun GridContentCard(
                     )
                 }
 
+                badgeText?.let { label ->
+                    Text(label,style=MaterialTheme.typography.labelMedium,color=Color.White,
+                        modifier=Modifier.align(Alignment.TopStart).padding(NuvioTheme.spacing.sm)
+                            .background(Color.Black.copy(alpha=.8f),RoundedCornerShape(4.dp))
+                            .padding(horizontal=8.dp,vertical=4.dp))
+                }
                 if (isWatched) {
                     WatchedMarker(
                         modifier = Modifier

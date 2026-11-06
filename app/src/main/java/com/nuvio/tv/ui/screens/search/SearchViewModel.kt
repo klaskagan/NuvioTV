@@ -59,7 +59,8 @@ class SearchViewModel @Inject constructor(
     private val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
     val posterOptions: com.nuvio.tv.ui.components.posteroptions.PosterOptionsController,
     private val serverCatalog: ServerCatalog,
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val go3Discovery: com.nuvio.tv.go3.Go3Discovery = com.nuvio.tv.go3.Go3Discovery.Disabled
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
@@ -247,6 +248,7 @@ class SearchViewModel @Inject constructor(
             is SearchEvent.SelectDiscoverCatalog -> selectDiscoverCatalog(event.catalogKey)
             is SearchEvent.SelectDiscoverGenre -> selectDiscoverGenre(event.genre)
             SearchEvent.LoadNextDiscoverResults -> loadNextDiscoverResults()
+            SearchEvent.RefreshDiscover -> refreshGo3Discover()
             SearchEvent.Retry -> {
                 // An explicit retry must refetch even though nothing about the request changed.
                 lastRequestKey = null
@@ -904,9 +906,10 @@ class SearchViewModel @Inject constructor(
         _uiState.update { it.copy(discoverLoading = true) }
         val addons = try {
             searchAddons()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
-            _uiState.update { it.copy(discoverInitialized = true, discoverLoading = false) }
-            return
+            emptyList()
         }
 
         val discoverCatalogs = addons.flatMap { addon ->
@@ -933,7 +936,7 @@ class SearchViewModel @Inject constructor(
                         skipStep = catalog.skipStep()
                     )
                 }
-        }
+        } + go3Discovery.sources.map { source -> source.discover(go3Discovery.cached(source)?.filters.orEmpty()) }
 
         val selectedCatalog = resolveDiscoverCatalog(
             catalogs = discoverCatalogs,
@@ -950,6 +953,8 @@ class SearchViewModel @Inject constructor(
                 selectedDiscoverType = selectedType,
                 selectedDiscoverCatalogKey = selectedCatalog?.key,
                 selectedDiscoverGenre = selectedGenre,
+                go3CatalogueStale = false,
+                go3CatalogueError = null,
                 discoverInitialized = true,
                 discoverLoading = false,
                 discoverResults = emptyList(),
@@ -1000,6 +1005,8 @@ class SearchViewModel @Inject constructor(
                 selectedDiscoverCatalogKey = catalog.key,
                 selectedDiscoverType = catalog.type,
                 selectedDiscoverGenre = null,
+                go3CatalogueStale = false,
+                go3CatalogueError = null,
                 discoverResults = emptyList(),
                 pendingDiscoverResults = emptyList(),
                 discoverPage = 1,
@@ -1013,6 +1020,11 @@ class SearchViewModel @Inject constructor(
     }
 
     private fun selectDiscoverGenre(genre: String?) {
+        val source=com.nuvio.tv.go3.Go3CatalogueSource.fromKey(_uiState.value.selectedDiscoverCatalogKey.orEmpty())
+        if(source!=null) {
+            _uiState.update { it.copy(selectedDiscoverGenre=genre) }
+            go3Discovery.cached(source)?.let { applyGo3Snapshot(source,it); return }
+        }
         _uiState.update {
             it.copy(
                 selectedDiscoverGenre = genre,
@@ -1055,6 +1067,8 @@ class SearchViewModel @Inject constructor(
     }
 
     private fun fetchDiscoverContent(reset: Boolean) {
+        val go3Source=com.nuvio.tv.go3.Go3CatalogueSource.fromKey(_uiState.value.selectedDiscoverCatalogKey.orEmpty())
+        if(go3Source!=null) { fetchGo3Discover(go3Source,refresh=false); return }
         discoverJob?.cancel()
         discoverJob = viewModelScope.launch {
             val state = _uiState.value
@@ -1165,8 +1179,44 @@ class SearchViewModel @Inject constructor(
         selectedType: String,
         preferredKey: String?
     ): DiscoverCatalog? {
-        val filtered = catalogs.filter { it.type == selectedType }
+        val filtered = catalogs.filter { it.type == selectedType }.sortedBy { if(it.key.startsWith("go3:")) 0 else 1 }
         return filtered.firstOrNull { it.key == preferredKey } ?: filtered.firstOrNull()
+    }
+
+    fun revalidateGo3IfNeeded() {
+        val source=com.nuvio.tv.go3.Go3CatalogueSource.fromKey(_uiState.value.selectedDiscoverCatalogKey.orEmpty()) ?: return
+        if(_uiState.value.discoverLoading || discoverJob?.isActive==true) return
+        if(go3Discovery.cached(source)?.stale!=false) fetchGo3Discover(source,refresh=false)
+    }
+    private fun refreshGo3Discover() {
+        val source=com.nuvio.tv.go3.Go3CatalogueSource.fromKey(_uiState.value.selectedDiscoverCatalogKey.orEmpty()) ?: return
+        fetchGo3Discover(source,refresh=true)
+    }
+    private fun fetchGo3Discover(source: com.nuvio.tv.go3.Go3CatalogueSource,refresh: Boolean) {
+        discoverJob?.cancel()
+        go3Discovery.cached(source)?.let { applyGo3Snapshot(source,it) }
+        _uiState.update { it.copy(discoverLoading=it.discoverResults.isEmpty(),discoverHasMore=false,go3CatalogueError=null) }
+        discoverJob=viewModelScope.launch {
+            try { applyGo3Snapshot(source,go3Discovery.load(source,refresh)) }
+            catch(cancelled: CancellationException) { throw cancelled }
+            catch(_: Exception) {
+                if(_uiState.value.selectedDiscoverCatalogKey=="go3:${source.key}") _uiState.update {
+                    it.copy(discoverLoading=false,discoverLoadingMore=false,discoverHasMore=false,
+                        go3CatalogueError=context.getString(R.string.go3_catalogue_error))
+                }
+            }
+        }
+    }
+    private fun applyGo3Snapshot(source: com.nuvio.tv.go3.Go3CatalogueSource,snapshot: com.nuvio.tv.go3.Go3CatalogueSnapshot) {
+        if(_uiState.value.selectedDiscoverCatalogKey!="go3:${source.key}") return
+        _uiState.update { state ->
+            val filter=state.selectedDiscoverGenre?.takeIf { it in snapshot.filters }
+            val rows=snapshot.filtered(filter).map { it.preview(snapshot.stale) }
+            state.copy(discoverLoading=false,discoverLoadingMore=false,discoverHasMore=false,discoverPage=1,
+                discoverResults=rows.take(DISCOVER_INITIAL_LIMIT),pendingDiscoverResults=rows.drop(DISCOVER_INITIAL_LIMIT),
+                selectedDiscoverGenre=filter,go3CatalogueStale=snapshot.stale,go3CatalogueError=null,
+                discoverCatalogs=state.discoverCatalogs.map { if(it.key=="go3:${source.key}") it.copy(genres=snapshot.filters) else it })
+        }
     }
 
     private fun buildSearchTargets(addons: List<Addon>): List<Pair<Addon, CatalogDescriptor>> {

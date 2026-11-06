@@ -177,6 +177,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.libass.media.widget.AssSubtitleSurfaceView
 import kotlin.math.abs
+import com.nuvio.tv.go3.isAtGo3LiveEdge
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 
@@ -214,6 +215,16 @@ fun PlayerScreen(
     onOpenPartyMedia: (PartyMedia) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val footballViewModel: com.nuvio.tv.football.FootballLineupsViewModel = hiltViewModel()
+    val footballState by footballViewModel.state.collectAsState()
+    var lineupsOpen by remember { mutableStateOf(false) }
+    val footballIdentity="${viewModel.controller.profileId}:${uiState.currentVideoId}:${uiState.title}"
+    val lineupsAvailable=com.nuvio.tv.football.supportsFootballLineups(uiState.contentType)
+    LaunchedEffect(footballIdentity,lineupsAvailable) { lineupsOpen=false;footballViewModel.close();footballViewModel.select(footballIdentity) }
+    DisposableEffect(footballViewModel) { onDispose { footballViewModel.close() } }
+    val closeLineups = { lineupsOpen=false;footballViewModel.close() }
+    if(viewModel.controller.isGo3Playback) com.nuvio.tv.go3.Go3SecureWindow()
+
     val playerBadges = rememberPlayerBadges(viewModel, uiState)
     val partyState by viewModel.party.state.collectAsState()
     val partyPlayback by viewModel.party.playback.collectAsState()
@@ -415,6 +426,8 @@ fun PlayerScreen(
             viewModel.onEvent(PlayerEvent.OnDismissStillWatchingPrompt)
         } else if (uiState.showControls) {
             viewModel.hideControls()
+        } else if(lineupsOpen) {
+            closeLineups()
         } else {
             exitPlayer()
         }
@@ -660,7 +673,7 @@ fun PlayerScreen(
     // the video surface and its subtitles are never inside this layer.
     val playerControlsDim = Modifier.playerControlsBrightness(uiState.playerControlsBrightness)
 
-    Box(
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .then(if (transparentLetterbox) Modifier else Modifier.background(Color.Black))
@@ -843,7 +856,7 @@ fun PlayerScreen(
                         uiState.postPlayMode is PostPlayMode.StillWatching ||
                         postPlayRecommendationState.isVisible ||
                         uiState.error != null
-                if (panelOrDialogOpen) return@onKeyEvent false
+                if (panelOrDialogOpen || (lineupsOpen && !uiState.showControls)) return@onKeyEvent false
 
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
@@ -859,8 +872,14 @@ fun PlayerScreen(
                 }
 
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                    if (uiState.showPauseOverlay) {
-                        when (keyEvent.nativeKeyEvent.keyCode) {
+                    val keyCode = keyEvent.nativeKeyEvent.keyCode
+                    val seekingFromPause = uiState.showPauseOverlay && uiState.canSeekLive &&
+                        (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                            keyCode == KeyEvent.KEYCODE_MEDIA_REWIND || keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)
+                    if (seekingFromPause) {
+                        viewModel.controller.onEvent(PlayerEvent.OnDismissPauseOverlay, showPlaybackControls = false)
+                    } else if (uiState.showPauseOverlay) {
+                        when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER,
                             KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_NUMPAD_ENTER,
@@ -1071,7 +1090,7 @@ fun PlayerScreen(
             !uiState.showLoadingOverlay && !uiState.showPauseOverlay &&
             !uiState.showSubtitleDelayOverlay && !uiState.showSubtitleTimingDialog &&
             !uiState.showMoreDialog &&
-            !uiState.isLive
+            (!uiState.isLive || uiState.canSeekLive)
         val playerControlsVisible = uiState.showControls && uiState.error == null &&
             !uiState.showLoadingOverlay && !uiState.showPauseOverlay &&
             !uiState.showStreamInfoOverlay &&
@@ -1094,10 +1113,14 @@ fun PlayerScreen(
             }
         }
         val fallbackSubtitleLiftPx = with(LocalDensity.current) { SUBTITLE_CONTROLS_LIFT.toPx() }
+        if(lineupsOpen && lineupsAvailable) com.nuvio.tv.football.FootballLineupsPanel(
+            state=footballState,onRetry={ footballViewModel.open(uiState.title, uiState.currentVideoId, retry = true) },onRestore=closeLineups,
+            onPlayerControls={ viewModel.onEvent(PlayerEvent.OnToggleControls) },
+            playerControlsVisible=playerControlsVisible)
         val playerSurfaceModifier = Modifier
             .align(Alignment.TopEnd)
-            .padding(end = postPlayRecommendationPlayerPadding, top = postPlayRecommendationPlayerPadding)
-            .fillMaxWidth(postPlayRecommendationPlayerWidth)
+            .padding(end = if(lineupsOpen) 24.dp else postPlayRecommendationPlayerPadding, top = if(lineupsOpen) 88.dp else postPlayRecommendationPlayerPadding)
+            .then(if(lineupsOpen) Modifier.width((maxWidth-48.dp)*.38f) else Modifier.fillMaxWidth(postPlayRecommendationPlayerWidth))
             .aspectRatio(16f / 9f)
             .clip(playerSurfaceShape)
             .border(
@@ -1631,7 +1654,12 @@ fun PlayerScreen(
                     Log.d("PlayerScreen", "onToggleAspectRatio called - dispatching event")
                     viewModel.onEvent(PlayerEvent.OnToggleAspectRatio)
                 },
-                onSwitchPlayerEngine = { viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
+                onSwitchPlayerEngine = { if(!viewModel.controller.isGo3Playback) viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
+                onToggleLineups = {
+                    if(lineupsOpen) closeLineups() else if(lineupsAvailable) {
+                        lineupsOpen=true;footballViewModel.open(uiState.title, uiState.currentVideoId);viewModel.hideControls()
+                    }
+                },
                 onReportPlaybackIssue = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
                 onToggleMoreActions = {
                     if (uiState.showMoreDialog) {
@@ -1662,7 +1690,7 @@ fun PlayerScreen(
                             }
                         }
                     }
-                }.takeUnless { uiState.isServerStream },
+                }.takeUnless { uiState.isServerStream || viewModel.controller.isGo3Playback },
                 onShowStreamInfo = {
                     restoreStreamInfoFocus = true
                     viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
@@ -2777,6 +2805,7 @@ private fun PlayerControlsOverlay(
     onShowSpeedDialog: () -> Unit,
     onToggleAspectRatio: () -> Unit,
     onSwitchPlayerEngine: () -> Unit,
+    onToggleLineups: () -> Unit,
     onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
     onOpenInExternalPlayer: (() -> Unit)?,
@@ -2815,7 +2844,9 @@ private fun PlayerControlsOverlay(
     var showEngineSwitchConfirm by remember { mutableStateOf(false) }
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
     val isLivePlayback = playbackTimeline.isLive
-    val progressUpTarget = if (isLivePlayback) {
+    val go3Dvr = playbackTimeline.go3Dvr
+    val showGoLive = go3Dvr?.isAtGo3LiveEdge(playbackTimeline.currentPosition) == false
+    val progressUpTarget = if (isLivePlayback && go3Dvr == null) {
         progressBarUpFocusRequester ?: playPauseFocusRequester
     } else {
         progressBarFocusRequester
@@ -2937,7 +2968,7 @@ private fun PlayerControlsOverlay(
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
 
-            if (!isLivePlayback) {
+            if (!isLivePlayback || go3Dvr != null) {
                 // Progress bar — always LTR regardless of locale
                 DisposableEffect(Unit) {
                     onDispose { progressBarClearancePx = 0f }
@@ -3003,6 +3034,24 @@ private fun PlayerControlsOverlay(
                         onFocused = onResetHideTimer
                     )
 
+                    com.nuvio.tv.football.FootballLineupsToggle(
+                        contentType = uiState.contentType,
+                        onClick = onToggleLineups,
+                        onFocused = onResetHideTimer,
+                        upFocusRequester = progressUpTarget,
+                        onDownKey = onHideControls,
+                    )
+                    if (showGoLive) {
+                        androidx.tv.material3.Button(
+                            onClick = {
+                                playPauseFocusRequester.requestFocus()
+                                viewModel.controller.go3GoLive()
+                                onResetHideTimer()
+                            },
+                            modifier = Modifier.onFocusChanged { if (it.isFocused) onResetHideTimer() },
+                        ) { Text(stringResource(R.string.go3_go_live)) }
+                    }
+
                     if (showNextEpisodeButton) {
                         ControlButton(
                             icon = Icons.Default.SkipNext,
@@ -3049,15 +3098,17 @@ private fun PlayerControlsOverlay(
                         )
                     }
 
-                    ControlButton(
-                        icon = Icons.Default.SwapHoriz,
-                        iconPainter = customSourcePainter,
-                        contentDescription = stringResource(R.string.cd_sources),
-                        onClick = onShowSourcesPanel,
-                        upFocusRequester = progressUpTarget,
-                        onDownKey = onHideControls,
-                        onFocused = onResetHideTimer
-                    )
+                    if (!viewModel.controller.isGo3Playback) {
+                        ControlButton(
+                            icon = Icons.Default.SwapHoriz,
+                            iconPainter = customSourcePainter,
+                            contentDescription = stringResource(R.string.cd_sources),
+                            onClick = onShowSourcesPanel,
+                            upFocusRequester = progressUpTarget,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
+                    }
 
                     if (hasEpisodeContext) {
                         ControlButton(
@@ -3119,7 +3170,7 @@ private fun PlayerControlsOverlay(
                                 onDownKey = onHideControls,
                                 onFocused = onResetHideTimer
                             )
-                            ControlButton(
+                            if(!viewModel.controller.isGo3Playback) ControlButton(
                                 icon = Icons.Default.SwapHoriz,
                                 contentDescription = stringResource(R.string.cd_switch_player_engine),
                                 onClick = { showEngineSwitchConfirm = true },
@@ -3216,41 +3267,46 @@ private fun PlayerControlsProgressBarHost(
 ) {
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
 
-    ChapterTitle(chapters = chapters, positionMs = playbackTimeline.currentPosition)
+    val dvr = playbackTimeline.go3Dvr
+    val start = dvr?.first ?: 0L
+    val end = dvr?.last ?: playbackTimeline.duration
+    val visibleChapters = if (dvr == null) chapters else emptyList()
+
+    ChapterTitle(chapters = visibleChapters, positionMs = playbackTimeline.currentPosition)
     ProgressBar(
-        chapters = chapters,
-        currentPosition = playbackTimeline.currentPosition,
-        duration = playbackTimeline.duration,
-        onSeekPreview = { delta ->
-            viewModel.onEvent(PlayerEvent.OnPreviewSeekBy(delta))
-        },
-        onSeekCommit = {
-            viewModel.onEvent(PlayerEvent.OnCommitPreviewSeek)
-        },
+        chapters = visibleChapters,
+        currentPosition = (playbackTimeline.currentPosition - start).coerceAtLeast(0),
+        duration = end - start,
+        onSeekPreview = { delta -> viewModel.onEvent(PlayerEvent.OnPreviewSeekBy(delta)) },
+        onSeekCommit = { viewModel.onEvent(PlayerEvent.OnCommitPreviewSeek) },
         focusRequester = focusRequester,
         upFocusRequester = upFocusRequester,
         downFocusRequester = downFocusRequester,
         onUpKey = onUpKey,
         onFocused = onFocused,
         onClick = onClick,
-        bufferedPosition = playbackTimeline.bufferedPosition
+        bufferedPosition = (playbackTimeline.bufferedPosition - start).coerceAtLeast(0),
     )
 }
 
 @Composable
 private fun PlayerControlsTimeTextHost(viewModel: PlayerViewModel) {
-    val playbackTimeline by viewModel.playbackTimeline.collectAsState()
-    val timeText = if (playbackTimeline.isLive) {
-        stringResource(R.string.player_live_watched, formatTime(playbackTimeline.watchedDurationMs))
-    } else {
-        "${formatTime(playbackTimeline.currentPosition)} / ${formatTime(playbackTimeline.duration)}"
+    val timeline by viewModel.playbackTimeline.collectAsState()
+    val dvr = timeline.go3Dvr
+    val isGo3Live = timeline.isLive && viewModel.controller.isGo3Playback
+    if (isGo3Live && (dvr == null || dvr.isAtGo3LiveEdge(timeline.currentPosition))) {
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.go3_live), style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            Box(Modifier.size(7.dp).background(Color(0xffef4444), CircleShape))
+        }
+        return
     }
-
-    Text(
-        text = timeText,
-        style = MaterialTheme.typography.bodyMedium,
-        color = Color.White.copy(alpha = 0.9f)
-    )
+    val timeText = when {
+        dvr != null -> stringResource(R.string.go3_behind_live, formatTime((dvr.last - timeline.currentPosition).coerceAtLeast(0)))
+        timeline.isLive -> stringResource(R.string.player_live_watched, formatTime(timeline.watchedDurationMs))
+        else -> "${formatTime(timeline.currentPosition)} / ${formatTime(timeline.duration)}"
+    }
+    Text(timeText, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.9f))
 }
 
 @Composable
@@ -3295,7 +3351,7 @@ private fun ReportControlButton(
 }
 
 @Composable
-private fun ControlButton(
+internal fun ControlButton(
     icon: ImageVector,
     iconPainter: Painter? = null,
     contentDescription: String,
@@ -3576,7 +3632,8 @@ private fun SeekOverlay(
     currentPosition: Long,
     duration: Long,
     bufferedPosition: Long = 0L,
-    chapters: List<PlayerChapter> = emptyList()
+    chapters: List<PlayerChapter> = emptyList(),
+    positionLabel: String? = null
 ) {
     Column(
         modifier = Modifier
@@ -3602,7 +3659,7 @@ private fun SeekOverlay(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${formatTime(currentPosition)} / ${formatTime(duration)}",
+                    text = positionLabel ?: "${formatTime(currentPosition)} / ${formatTime(duration)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.9f)
                 )
@@ -3615,11 +3672,17 @@ private fun SeekOverlay(
 private fun SeekOverlayHost(viewModel: PlayerViewModel, chapters: List<PlayerChapter>) {
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
 
+    val dvr = playbackTimeline.go3Dvr
+    val start = dvr?.first ?: 0L
     SeekOverlay(
-        currentPosition = playbackTimeline.currentPosition,
-        duration = playbackTimeline.duration,
-        bufferedPosition = playbackTimeline.bufferedPosition,
-        chapters = chapters
+        currentPosition = (playbackTimeline.currentPosition - start).coerceAtLeast(0),
+        duration = (dvr?.last ?: playbackTimeline.duration) - start,
+        bufferedPosition = (playbackTimeline.bufferedPosition - start).coerceAtLeast(0),
+        chapters = if (dvr == null) chapters else emptyList(),
+        positionLabel = dvr?.let {
+            if (it.isAtGo3LiveEdge(playbackTimeline.currentPosition)) stringResource(R.string.go3_live)
+            else stringResource(R.string.go3_behind_live, formatTime((it.last - playbackTimeline.currentPosition).coerceAtLeast(0)))
+        },
     )
 }
 

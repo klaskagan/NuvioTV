@@ -211,6 +211,14 @@ internal fun PlayerRuntimeController.initializePlayer(
             currentBitrateAwareLoadControl = null
             configuredBackBufferMs = 0
 
+            if(isGo3Playback) {
+                mediaSourceFactory.go3Ticket=go3Session.prepare(url,scope) { message ->
+                    _exoPlayer?.pause()
+                    _uiState.update { it.copy(error=message,showLoadingOverlay=false) }
+                }
+                go3PendingStartOverEpochMs=go3Session.startOverEpochMs
+                currentStreamMimeType=MimeTypes.APPLICATION_MPD
+            }
             val playerSettings = playerSettingsDataStore.playerSettings.first()
             currentPlayerSettingsForReport = playerSettings
             rememberAudioDelayPerDeviceEnabled = playerSettings.rememberAudioDelayPerDevice
@@ -237,13 +245,14 @@ internal fun PlayerRuntimeController.initializePlayer(
                 preferredAudioLanguage = playerSettings.preferredAudioLanguage,
                 secondaryPreferredAudioLanguage = playerSettings.secondaryPreferredAudioLanguage,
                 deviceLanguages = resolveDeviceAudioLanguages(),
-                contentOriginalLanguage = contentLanguage
+                contentOriginalLanguage = contentLanguage,
+                go3Playback = isGo3Playback
             )
             mpvPreferredAudioLanguages = preferredAudioLanguages
             mpvHi10pGnextSoftwareFallbackEnabledSetting =
                 playerSettings.mpvHi10pGnextSoftwareFallbackEnabled
             mpvHardwareDecodeModeSetting = playerSettings.mpvHardwareDecodeMode
-            var effectiveInternalPlayerEngine = overrideInternalPlayerEngine ?: playerSettings.internalPlayerEngine
+            var effectiveInternalPlayerEngine = if(isGo3Playback) InternalPlayerEngine.EXOPLAYER else overrideInternalPlayerEngine ?: playerSettings.internalPlayerEngine
             if (effectiveInternalPlayerEngine == InternalPlayerEngine.AUTO) {
                 effectiveInternalPlayerEngine = resolveAutoInternalPlayerEngine()
             }
@@ -1184,8 +1193,30 @@ internal fun PlayerRuntimeController.initializePlayer(
                         }
                     }
 
+                    private fun applyGo3StartOver(): Boolean {
+                        val beginning=go3PendingStartOverEpochMs ?: return true
+                        if(currentTimeline.isEmpty) return false
+                        val window=currentTimeline.getWindow(currentMediaItemIndex,androidx.media3.common.Timeline.Window())
+                        val position=com.nuvio.tv.go3.go3StartOverPosition(beginning,
+                            window.windowStartTimeMs.takeIf { it!=C.TIME_UNSET },window.durationMs,window.isSeekable) ?: return false
+                        go3PendingStartOverEpochMs=null
+                        seekTo(position)
+                        clearPendingInitialResumePosition()
+                        updatePlaybackTimeline(currentPosition=position)
+                        return true
+                    }
+                    override fun onTimelineChanged(timeline: androidx.media3.common.Timeline,reason: Int) {
+                        if(isGo3Playback) applyGo3StartOver()
+                    }
+
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (isReleasingPlayer) return
+                        if(isGo3Playback && playbackState==Player.STATE_READY && !applyGo3StartOver()) {
+                            go3PendingStartOverEpochMs=null
+                            stop();clearMediaItems();go3Session.close(scope)
+                            _uiState.update { it.copy(error="Go3’s current live window does not include this event’s beginning. Choose Watch live.",showLoadingOverlay=false) }
+                            return
+                        }
                         logScrobbleDiagnostic(
                             "exo_playback_state",
                             "playbackState=$playbackState playWhenReady=$playWhenReady isPlaying=$isPlaying " +
@@ -1490,6 +1521,14 @@ internal fun PlayerRuntimeController.initializePlayer(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        if(isGo3Playback) {
+                            if(playerError!==error) return
+                            stop();clearMediaItems()
+                            val message="Go3 playback failed (${error.errorCodeName}). Retry or sign in again."
+                            _uiState.update { it.copy(error=message,showLoadingOverlay=false) }
+                            go3Session.close(scope)
+                            return
+                        }
                         if (isReleasingPlayer && error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT) return
                         cancelFirstFrameWatchdog()
                         val detailedError = error.toDisplayMessage(context)
@@ -1752,8 +1791,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                         playbackAnalyticsDiagnostics.onRenderedFirstFrame(eventTime)
                     }
 
+                    override fun onDrmKeysLoaded(eventTime: AnalyticsListener.EventTime) {
+                        if(isGo3Playback) go3DrmKeysLoaded++
+                    }
+
                     override fun onPlayerError(eventTime: AnalyticsListener.EventTime, error: PlaybackException) {
-                        playbackAnalyticsDiagnostics.onPlayerError(eventTime, error)
+                        if(!isGo3Playback) playbackAnalyticsDiagnostics.onPlayerError(eventTime, error)
                     }
 
                     override fun onVideoDecoderInitialized(
@@ -1780,6 +1823,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                         playbackAnalyticsDiagnostics.onVideoDecoderReleased(eventTime, decoderName)
                     }
 
+                    private var lastGo3InputFormat: Triple<Int, Int, Int>? = null
+                    private var go3FormatSamples = 0
+                    private var lastGo3LoadFormat: Triple<Int, Int, Int>? = null
+                    private var go3LoadSamples = 0
+                    private var go3LoadErrors = 0
+
                     override fun onVideoInputFormatChanged(
                         eventTime: AnalyticsListener.EventTime,
                         format: Format,
@@ -1790,6 +1839,16 @@ internal fun PlayerRuntimeController.initializePlayer(
                             format = format,
                             reuseEvaluation = decoderReuseEvaluation
                         )
+                        if (isGo3Playback && com.nuvio.tv.BuildConfig.IS_DEBUG_BUILD && go3FormatSamples < 32) {
+                            val sample = Triple(format.width, format.height, format.bitrate)
+                            if (sample != lastGo3InputFormat) {
+                                lastGo3InputFormat = sample
+                                go3FormatSamples++
+                                Log.d("Go3VideoQuality", "input=${format.width}x${format.height} " +
+                                    "bitrateBps=${format.bitrate} estimatedBps=${bandwidthMeter.bitrateEstimate} " +
+                                    "bufferMs=${eventTime.totalBufferedDurationMs}")
+                            }
+                        }
                         onVideoInputFormatForHdr(format)
                     }
 
@@ -1883,7 +1942,19 @@ internal fun PlayerRuntimeController.initializePlayer(
                         loadEventInfo: LoadEventInfo,
                         mediaLoadData: MediaLoadData
                     ) {
-                        playbackAnalyticsDiagnostics.onLoadStarted(eventTime, loadEventInfo, mediaLoadData)
+                        if (!isGo3Playback) {
+                            playbackAnalyticsDiagnostics.onLoadStarted(eventTime, loadEventInfo, mediaLoadData)
+                        } else if (com.nuvio.tv.BuildConfig.IS_DEBUG_BUILD && mediaLoadData.trackType == C.TRACK_TYPE_VIDEO && go3LoadSamples < 32) {
+                            val format = mediaLoadData.trackFormat ?: return
+                            val sample = Triple(format.width, format.height, format.bitrate)
+                            if (sample != lastGo3LoadFormat) {
+                                lastGo3LoadFormat = sample
+                                go3LoadSamples++
+                                Log.d("Go3VideoQuality", "segment=${format.width}x${format.height} " +
+                                    "bitrateBps=${format.bitrate} estimatedBps=${bandwidthMeter.bitrateEstimate} " +
+                                    "bufferMs=${eventTime.totalBufferedDurationMs} reason=${mediaLoadData.trackSelectionReason}")
+                            }
+                        }
                     }
 
                     override fun onLoadCompleted(
@@ -1891,7 +1962,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         loadEventInfo: LoadEventInfo,
                         mediaLoadData: MediaLoadData
                     ) {
-                        playbackAnalyticsDiagnostics.onLoadCompleted(eventTime, loadEventInfo, mediaLoadData)
+                        if(!isGo3Playback) playbackAnalyticsDiagnostics.onLoadCompleted(eventTime, loadEventInfo, mediaLoadData)
                     }
 
                     override fun onLoadCanceled(
@@ -1899,7 +1970,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         loadEventInfo: LoadEventInfo,
                         mediaLoadData: MediaLoadData
                     ) {
-                        playbackAnalyticsDiagnostics.onLoadCanceled(eventTime, loadEventInfo, mediaLoadData)
+                        if(!isGo3Playback) playbackAnalyticsDiagnostics.onLoadCanceled(eventTime, loadEventInfo, mediaLoadData)
                     }
 
                     override fun onLoadError(
@@ -1909,7 +1980,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                         error: java.io.IOException,
                         wasCanceled: Boolean
                     ) {
-                        playbackAnalyticsDiagnostics.onLoadError(
+                        if (isGo3Playback && com.nuvio.tv.BuildConfig.IS_DEBUG_BUILD && go3LoadErrors < 12) {
+                            go3LoadErrors++
+                            val status = (error as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode ?: 0
+                            Log.d("Go3VideoQuality", "loadErrorStatus=$status track=${mediaLoadData.trackType} " +
+                                "bitrateBps=${mediaLoadData.trackFormat?.bitrate ?: -1} canceled=$wasCanceled")
+                        }
+                        if(!isGo3Playback) playbackAnalyticsDiagnostics.onLoadError(
                             eventTime = eventTime,
                             loadEventInfo = loadEventInfo,
                             mediaLoadData = mediaLoadData,
@@ -1919,10 +1996,18 @@ internal fun PlayerRuntimeController.initializePlayer(
                     }
                 })
             }
-            if (!startupSubtitlePreparation.fetchCompleted) {
+            if (!isGo3Playback && !startupSubtitlePreparation.fetchCompleted) {
                 fetchAddonSubtitles()
             }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
+            if(isGo3Playback) {
+                go3Session.close(scope)
+                val message=(e as? com.nuvio.tv.go3.Go3Failure)?.reason ?: "Go3 playback could not start. Retry or sign in again."
+                _uiState.update { it.copy(error=message,showLoadingOverlay=false) }
+                return@launch
+            }
             if (
                 maybeAutoSwitchInternalPlayerOnStartupError(
                     detailedError = e.message ?: context.getString(com.nuvio.tv.R.string.player_error_initialize_failed),
@@ -1998,8 +2083,10 @@ internal fun resolvePreferredAudioLanguages(
     preferredAudioLanguage: String,
     secondaryPreferredAudioLanguage: String?,
     deviceLanguages: List<String>,
-    contentOriginalLanguage: String? = null
+    contentOriginalLanguage: String? = null,
+    go3Playback: Boolean = false
 ): List<String> {
+    if(go3Playback) return listOf("lt","lit")
     fun normalize(language: String?): String? {
         val normalized = language?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
         return when (normalized) {

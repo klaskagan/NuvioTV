@@ -106,11 +106,14 @@ internal fun DiscoverSection(
     onSelectCatalog: (String) -> Unit,
     onSelectGenre: (String?) -> Unit,
     onLoadMore: () -> Unit,
+    onRefreshDiscover: () -> Unit = {},
     onItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val selectedCatalog = uiState.discoverCatalogs.firstOrNull { it.key == uiState.selectedDiscoverCatalogKey }
+    val isGo3=selectedCatalog?.key?.startsWith("go3:")==true
     val filteredCatalogs = uiState.discoverCatalogs.filter { it.type == uiState.selectedDiscoverType }
+        .sortedBy { if(it.key.startsWith("go3:")) 0 else 1 }
     val genres = selectedCatalog?.genres.orEmpty()
     var expandedPicker by remember { mutableStateOf<String?>(null) }
     val filterFocusRequester = remember { FocusRequester() }
@@ -128,12 +131,19 @@ internal fun DiscoverSection(
     }
     val selectedTypeLabel = localizedTypeLabel(uiState.selectedDiscoverType)
     val selectedCatalogLabel = selectedCatalog?.catalogName ?: stringResource(R.string.discover_select_catalog)
-    val selectedGenreLabel = uiState.selectedDiscoverGenre?.let { localizedGenreLabel(it) } ?: stringResource(R.string.discover_genre_default)
+    val defaultFilter=stringResource(if(isGo3) R.string.go3_all_events else R.string.discover_genre_default)
+    val selectedGenreLabel = uiState.selectedDiscoverGenre?.let { localizedGenreLabel(it) } ?: defaultFilter
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = NuvioTheme.spacing.xxxl),
+            .padding(horizontal = NuvioTheme.spacing.xxxl)
+            .onPreviewKeyEvent { event ->
+                if(isGo3 && event.nativeKeyEvent.keyCode==AndroidKeyEvent.KEYCODE_MENU) {
+                    if(event.nativeKeyEvent.action==AndroidKeyEvent.ACTION_UP) onRefreshDiscover()
+                    true
+                } else false
+            },
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
     ) {
         Text(
@@ -186,12 +196,12 @@ internal fun DiscoverSection(
 
             DiscoverDropdownPicker(
                 modifier = Modifier.weight(1f),
-                title = stringResource(R.string.discover_filter_genre),
+                title = stringResource(if(isGo3) R.string.go3_availability else R.string.discover_filter_genre),
                 value = selectedGenreLabel,
                 selectedValue = uiState.selectedDiscoverGenre ?: "__default__",
                 expanded = expandedPicker == "genre",
                 options = buildList {
-                    add(DiscoverOption(stringResource(R.string.discover_genre_default), "__default__"))
+                    add(DiscoverOption(defaultFilter, "__default__"))
                     addAll(genres.map { DiscoverOption(localizedGenreLabel(it), it) })
                 },
                 onExpandedChange = { shouldExpand ->
@@ -203,6 +213,15 @@ internal fun DiscoverSection(
                 },
                 blockFocus = blockFilterFocus
             )
+        }
+
+        if(isGo3 && (uiState.go3CatalogueStale || uiState.go3CatalogueError!=null)) {
+            Row(modifier=Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+                if(uiState.go3CatalogueStale) Text(stringResource(R.string.go3_catalogue_stale),
+                    style=MaterialTheme.typography.bodySmall,color=NuvioTheme.colors.TextSecondary)
+                uiState.go3CatalogueError?.let { Text(it,style=MaterialTheme.typography.bodySmall,color=NuvioTheme.colors.TextSecondary) }
+            }
         }
 
         selectedCatalog?.let { catalog ->
@@ -238,7 +257,8 @@ internal fun DiscoverSection(
                 Box(modifier = Modifier.onFocusChanged { gridHasFocus = it.hasFocus }) {
                 DiscoverGrid(
                     items = uiState.discoverResults,
-                    posterCardStyle = posterCardStyle,
+                    posterCardStyle = if(isGo3) posterCardStyle.copy(width=posterCardStyle.height) else posterCardStyle,
+                    showAvailability = isGo3,
                     watchedMovieIds = watchedMovieIds,
                     watchedSeriesIds = watchedSeriesIds,
                     focusResults = focusResults,
@@ -497,7 +517,8 @@ internal fun DiscoverGrid(
     onLoadMore: () -> Unit,
     onItemClick: (Int, MetaPreview) -> Unit,
     onItemLongPress: (MetaPreview) -> Unit = {},
-    filterKey: String = ""
+    filterKey: String = "",
+    showAvailability: Boolean = false
 ) {
     val restoreFocusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
@@ -671,6 +692,14 @@ internal fun DiscoverGrid(
                 onClick = { onItemClick(index, item) },
                 onLongPress = { onItemLongPress(item) },
                 posterCardStyle = adaptiveStyle,
+                showReleaseInfo = showAvailability,
+                badgeText = if(showAvailability) when(item.status) {
+                    "live" -> stringResource(R.string.go3_live)
+                    "upcoming" -> stringResource(R.string.go3_upcoming)
+                    "replay" -> stringResource(R.string.go3_replay)
+                    else -> null
+                } else null,
+                placeholderLabel = if(showAvailability) "Go3" else null,
                 isWatched = run {
                     val isSeries = item.apiType.equals("series", ignoreCase = true) || item.apiType.equals("tv", ignoreCase = true)
                     if (isSeries) item.id in watchedSeriesIds else item.id in watchedMovieIds

@@ -96,6 +96,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -372,6 +373,17 @@ fun SearchScreen(
     LaunchedEffect(isDiscoverMode) {
         if (isDiscoverMode) viewModel.ensureDiscoverLoaded()
     }
+    LaunchedEffect(lifecycleOwner, isDiscoverMode, uiState.selectedDiscoverCatalogKey) {
+        if (isDiscoverMode && uiState.selectedDiscoverCatalogKey.orEmpty().startsWith("go3:")) {
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    viewModel.revalidateGo3IfNeeded()
+                    delay(120_000)
+                }
+            }
+        }
+    }
+
     val hasPendingUnsubmittedQuery = remember(isDiscoverMode, trimmedQuery, trimmedSubmittedQuery) {
         !isDiscoverMode &&
             trimmedQuery.length >= MIN_SEARCH_QUERY_LENGTH &&

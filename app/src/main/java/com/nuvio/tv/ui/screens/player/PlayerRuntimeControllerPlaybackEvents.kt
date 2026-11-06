@@ -902,6 +902,8 @@ internal fun PlayerRuntimeController.currentWatchProgress(
 )
 
 internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, duration: Long, syncRemote: Boolean = true) {
+    // Sports programme identities are outside the synced movie/series collection contract.
+    if(isGo3Playback) return
     if (contentType.equals("cloud", ignoreCase = true)) {
         saveCloudLibraryProgress(position, duration, completed = false)
         return
@@ -989,6 +991,7 @@ internal fun PlayerRuntimeController.refreshScrobbleItem() {
 }
 
 internal fun PlayerRuntimeController.buildScrobbleItem(): TrackingMediaReference? {
+    if(isGo3Playback) return null
     val rawContentId = contentId ?: return null
     val isServerItem = ServerItemRef.isServerId(rawContentId)
     val parentMetaId = if (isServerItem) serverImdbId(rawContentId) ?: return null else rawContentId
@@ -1214,7 +1217,7 @@ internal fun PlayerRuntimeController.scheduleProgressSyncAfterSeek() {
 fun PlayerRuntimeController.scheduleHideControls() {
     hideControlsJob?.cancel()
     hideControlsJob = scope.launch {
-        delay(3000)
+        delay(if (isGo3Playback) 5_000L else 3_000L)
         if (_uiState.value.isPlaying && !_uiState.value.showAudioOverlay &&
             !_uiState.value.showSubtitleOverlay && !_uiState.value.showSubtitleStylePanel &&
             !_uiState.value.showSpeedDialog && !_uiState.value.showMoreDialog &&
@@ -1408,21 +1411,21 @@ fun PlayerRuntimeController.onEvent(
             if (showPlaybackControls) showControlsTemporarily()
         }
         PlayerEvent.OnSeekForward -> {
-            if (_playbackTimeline.value.isLive) return
             onEvent(PlayerEvent.OnSeekBy(deltaMs = PlayerScrubRates.STEP_SHORT_MS))
         }
         PlayerEvent.OnSeekBackward -> {
-            if (_playbackTimeline.value.isLive) return
             onEvent(PlayerEvent.OnSeekBy(deltaMs = -PlayerScrubRates.STEP_SHORT_MS))
         }
         is PlayerEvent.OnSeekBy -> {
-            if (_playbackTimeline.value.isLive) return
+            val dvr = go3SeekRange()
+            if (_playbackTimeline.value.isLive && dvr == null) return
             pendingPreviewSeekPosition = null
             val current = currentPlaybackPositionMs() ?: 0L
             val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
             val requested = (current + event.deltaMs)
                 .coerceAtLeast(0L)
                 .coerceAtMost(maxDuration)
+                .let { if (dvr == null) it else it.coerceIn(dvr) }
             val target = if (isPartyControlLocked) ownSeekTarget(requested) ?: return else requested
             val seekParameters = if (event.deltaMs < 0L) {
                 SeekParameters.PREVIOUS_SYNC
@@ -1440,12 +1443,14 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnPreviewSeekBy -> {
-            if (_playbackTimeline.value.isLive) return
+            val dvr = go3SeekRange()
+            if (_playbackTimeline.value.isLive && dvr == null) return
             val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
             val basePosition = pendingPreviewSeekPosition ?: currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
             val target = (basePosition + event.deltaMs)
                 .coerceAtLeast(0L)
                 .coerceAtMost(maxDuration)
+                .let { if (dvr == null) it else it.coerceIn(dvr) }
             pendingPreviewSeekPosition = target
             updatePlaybackTimeline(currentPosition = target)
             if (_uiState.value.showControls) {
@@ -1455,8 +1460,9 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         PlayerEvent.OnCommitPreviewSeek -> {
-            if (_playbackTimeline.value.isLive) return
-            val requested = pendingPreviewSeekPosition
+            val dvr = go3SeekRange()
+            if (_playbackTimeline.value.isLive && dvr == null) return
+            val requested = pendingPreviewSeekPosition?.let { if (dvr == null) it else it.coerceIn(dvr) }
             if (requested != null) {
                 val target = if (isPartyControlLocked) ownSeekTarget(requested) else requested
                 if (target == null) {
@@ -1477,9 +1483,11 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnSeekTo -> {
-            if (_playbackTimeline.value.isLive) return
+            val dvr = go3SeekRange()
+            if (_playbackTimeline.value.isLive && dvr == null) return
             pendingPreviewSeekPosition = null
-            val target = if (isPartyControlLocked) ownSeekTarget(event.position) ?: return else event.position
+            val requested = if (dvr == null) event.position else event.position.coerceIn(dvr)
+            val target = if (isPartyControlLocked) ownSeekTarget(requested) ?: return else requested
             seekPlaybackTo(target, SeekParameters.CLOSEST_SYNC)
             updatePlaybackTimeline(currentPosition = target)
             scheduleProgressSyncAfterSeek()
@@ -2063,6 +2071,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         PlayerEvent.OnSwitchInternalPlayerEngine -> {
+            if(isGo3Playback) return
             logSwitchTrace(
                 stage = "event-switch-engine",
                 message = "requestedByUser=true"

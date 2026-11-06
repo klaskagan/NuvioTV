@@ -51,7 +51,7 @@ internal fun PlayerRuntimeController.preparePlaybackBeforeStart(
         refreshScrobbleItem()
         if (persistedTrackPreference == null) {
             contentId?.let { id ->
-                val loaded = trackPreferenceDataStore.load(id)?.toTrackPreference()
+                val loaded = if(isGo3Playback) null else trackPreferenceDataStore.load(id)?.toTrackPreference()
                 logSwitchTrace(
                     stage = "track-pref-load",
                     message = "contentId=$id loadedAudio=${loaded?.audio?.language}/${loaded?.audio?.name} " +

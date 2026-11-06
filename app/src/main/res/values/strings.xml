@@ -1,4 +1,13 @@
 <resources>
+    <string name="type_sports">Sports</string>
+    <string name="go3_all_events">All events</string>
+    <string name="go3_availability">Availability</string>
+    <string name="go3_refresh">Refresh</string>
+    <string name="go3_live">Live</string>
+    <string name="go3_upcoming">Upcoming</string>
+    <string name="go3_replay">Replay</string>
+    <string name="go3_catalogue_stale">Previously loaded Go3 listings · availability may have changed</string>
+    <string name="go3_catalogue_error">Go3 listings could not refresh. Select Refresh to retry.</string>
     <string name="app_name">Nuvio</string>
     <string name="tv_channel_continue_watching">Continue Watching</string>
     <string name="type_movie">Movie</string>
@@ -1876,6 +1885,8 @@
     <string name="parental_severity_moderate">Moderate</string>
     <string name="parental_severity_mild">Mild</string>
     <string name="player_ends_at">Ends at %1$s</string>
+    <string name="go3_go_live">Go live</string>
+    <string name="go3_behind_live">%1$s behind live</string>
     <string name="player_live_watched">LIVE  %1$s</string>
     <!-- Season/episode code shown in player UI (e.g. S01E02). %1$d = season, %2$d = episode. -->
     <string name="season_episode_format">S%1$d E%2$d</string>

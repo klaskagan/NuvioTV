@@ -63,3 +63,9 @@ AGENTS.md
 /PR.md
 docs/
 status-page/
+
+# Reviewable Go3 feature documentation and reusable guidance.
+!AGENTS.md
+!docs/
+docs/*
+!docs/go3-football-port.md

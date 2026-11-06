@@ -194,6 +194,11 @@ class PlayerRuntimeController(
     internal val rememberedAudioLanguage: String? = navigationArgs.rememberedAudioLanguage
     internal val rememberedAudioName: String? = navigationArgs.rememberedAudioName
     internal val cloudSessionToken: String? = navigationArgs.cloudSessionToken
+    internal val go3Session by lazy { com.nuvio.tv.go3.Go3PlayerSession(context.applicationContext) }
+    internal var go3DrmKeysLoaded = 0
+    internal var go3PendingStartOverEpochMs: Long? = null
+    internal val isGo3Playback get() = currentStreamUrl.startsWith("go3:programme:")
+
     internal val mediaSourceFactory = PlayerMediaSourceFactory(context.applicationContext).apply {
         onStreamRedirected = { requestedUrl, resolvedUrl -> handleStreamRedirect(requestedUrl, resolvedUrl) }
     }
@@ -348,6 +353,33 @@ class PlayerRuntimeController(
     internal var livePlaybackLatched: Boolean = false
     internal var mpvDurationGrowth = LivePlaybackUiPolicy.DurationGrowth()
 
+    internal fun go3SeekRange(): LongRange? {
+        if (!isGo3Playback || !go3Session.isLiveEvent) return null
+        val player = _exoPlayer ?: return null
+        val timeline = player.currentTimeline
+        if (timeline.isEmpty) return null
+        val window = timeline.getWindow(player.currentMediaItemIndex, androidx.media3.common.Timeline.Window())
+        return com.nuvio.tv.go3.go3DvrRange(
+            programmeStartMs = go3Session.programmeStartMs,
+            windowStartMs = window.windowStartTimeMs.takeUnless { it == androidx.media3.common.C.TIME_UNSET },
+            durationMs = window.durationMs,
+            livePositionMs = window.defaultPositionMs,
+            seekable = window.isSeekable,
+        )
+    }
+
+    internal fun go3GoLive() {
+        val range = go3SeekRange() ?: return
+        val player = _exoPlayer ?: return
+        go3PendingStartOverEpochMs = null
+        pendingPreviewSeekPosition = null
+        userPausedManually = false
+        cancelPauseOverlay()
+        player.seekToDefaultPosition()
+        player.play()
+        updatePlaybackTimeline(currentPosition = range.last)
+    }
+
     internal fun updatePlaybackTimeline(
         currentPosition: Long = _playbackTimeline.value.currentPosition,
         duration: Long = _playbackTimeline.value.duration,
@@ -362,8 +394,10 @@ class PlayerRuntimeController(
             setPlaybackPaused(true)
             stopWatchProgressSaving()
         }
-        if (_uiState.value.isLive != isLive) {
-            _uiState.update { it.copy(isLive = isLive) }
+        val dvr = if (isLive) go3SeekRange() else null
+        val canSeekLive = dvr != null
+        if (_uiState.value.isLive != isLive || _uiState.value.canSeekLive != canSeekLive) {
+            _uiState.update { it.copy(isLive = isLive, canSeekLive = canSeekLive) }
         }
         _playbackTimeline.update {
             it.copy(
@@ -371,7 +405,8 @@ class PlayerRuntimeController(
                 duration = duration.coerceAtLeast(0L),
                 bufferedPosition = bufferedPosition.coerceAtLeast(0L),
                 isLive = isLive,
-                watchedDurationMs = watchedDurationMs.coerceAtLeast(0L)
+                watchedDurationMs = watchedDurationMs.coerceAtLeast(0L),
+                go3Dvr = dvr
             )
         }
     }
@@ -411,8 +446,8 @@ class PlayerRuntimeController(
         mpvDurationGrowth = LivePlaybackUiPolicy.DurationGrowth()
         liveWatchClock.reset()
         pendingPreviewSeekPosition = null
-        if (_uiState.value.isLive) {
-            _uiState.update { it.copy(isLive = false) }
+        if (_uiState.value.isLive || _uiState.value.canSeekLive) {
+            _uiState.update { it.copy(isLive = false, canSeekLive = false) }
         }
         _playbackTimeline.value = PlaybackTimelineState()
     }

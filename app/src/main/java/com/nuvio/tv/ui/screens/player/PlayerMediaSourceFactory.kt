@@ -63,6 +63,8 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 internal class PlayerMediaSourceFactory(private val context: Context) {
+    internal var go3SourceLoads = 0
+    internal var go3Ticket: com.nuvio.tv.go3.Go3Ticket? = null
     private var customExtractorsFactory: ExtractorsFactory? = null
     private var customSubtitleParserFactory: SubtitleParser.Factory? = null
     private val loadErrorHandlingPolicy = PlayerLoadErrorHandlingPolicy()
@@ -174,6 +176,10 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         mediaMetadata: androidx.media3.common.MediaMetadata? = null,
         cacheKey: String? = null
     ): MediaSource {
+        if(url.startsWith("go3:programme:")) {
+            val ticket=go3Ticket ?: throw com.nuvio.tv.go3.Go3Failure("Go3 playback session is unavailable. Retry.")
+            return com.nuvio.tv.go3.Go3MediaSource.create(ticket).also { go3SourceLoads++ }
+        }
         val sanitizedHeaders = sanitizeHeaders(headers)
         val resolvedMimeType = mimeTypeOverride ?: inferMimeType(
             url = url,
